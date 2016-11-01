@@ -35,14 +35,9 @@ service apache2 stop
 
 set -e
 
-# this allows us to skip any interactive post-install configuration,
-# specifically around keeping defaults for files that were modified.
-export DEBIAN_FRONTEND=noninteractive
-
 # update apt
 apt-get update
-# temporary workaround for where DEBIAN_FRONTEND=noninteractive isn't enough
-apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" -y upgrade
+apt-get -y upgrade
 
 # acquire and configure jenkins
 apt-get install -y git

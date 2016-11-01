@@ -419,6 +419,7 @@ fi
 
 apt-mark hold $SPINNAKER_SUBSYSTEMS
 apt-get -y update
+apt-get -y dist-upgrade
 DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" -y dist-upgrade
 apt-mark unhold $SPINNAKER_SUBSYSTEMS
 
