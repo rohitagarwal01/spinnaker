@@ -1,4 +1,5 @@
 # Standard python modules.
+import logging
 import time
 import sys
 
@@ -6,10 +7,13 @@ import sys
 import citest.gcp_testing as gcp
 import citest.json_predicate as jp
 import citest.service_testing as st
+from citest.json_contract import ObservationPredicateFactory
+ov_factory = ObservationPredicateFactory()
 
 # Spinnaker modules.
 import spinnaker_testing as sk
-import spinnaker_testing.gate as gate
+from spinnaker_testing import frigga
+from spinnaker_testing import gate
 import citest.base
 
 
@@ -31,8 +35,16 @@ class GoogleServerGroupTestScenario(sk.SpinnakerTestScenario):
   }
 
   @classmethod
+  def initArgumentParser(cls, parser, defaults=None):
+    """Initialize command line argument parser."""
+    super(GoogleServerGroupTestScenario, cls).initArgumentParser(
+        parser, defaults=defaults)
+    parser.add_argument('--regional', default=False, action='store_true',
+                        help='Test regional server groups rather than zonal.')
+
+  @classmethod
   def new_agent(cls, bindings):
-    '''Implements the base class interface to create a new agent.
+    """Implements the base class interface to create a new agent.
 
     This method is called by the base classes during setup/initialization.
 
@@ -44,15 +56,45 @@ class GoogleServerGroupTestScenario(sk.SpinnakerTestScenario):
     Returns:
       A citest.service_testing.BaseAgent that can interact with Gate.
       This is the agent that test operations will be posted to.
-    '''
+    """
     return gate.new_agent(bindings)
 
   def __init__(self, bindings, agent=None):
     super(GoogleServerGroupTestScenario, self).__init__(bindings, agent)
 
+    if bindings['REGIONAL']:
+      app_decorator = 'r'
+      self.__mig_title = 'Regional Instance Group'
+      self.__mig_resource_name = 'regionInstanceGroups'
+      self.__mig_resource_kwargs = {'region': bindings['TEST_GCE_REGION']}
+      self.__mig_manager_name = 'regionInstanceGroupManagers'
+      self.__mig_manager_kwargs = {'region': bindings['TEST_GCE_REGION']}
+      self.__mig_payload_extra = {
+          'regional': True, 'region': bindings['TEST_GCE_REGION']
+      }
+    else:
+      app_decorator = 'z'
+      self.__mig_title = 'Zonal Instance Group'
+      self.__mig_resource_name = 'instanceGroups'
+      self.__mig_resource_kwargs = {}  # all zones
+      self.__mig_manager_name = 'instanceGroupManagers'
+      self.__mig_manager_kwargs = {}  # all zones
+      self.__mig_payload_extra = {
+          'zone': bindings['TEST_GCE_ZONE']
+      }
+
+    logging.info('Running tests against %s', self.__mig_title)
+
+    if not bindings['TEST_APP']:
+      bindings['TEST_APP'] = app_decorator + 'svrgrptest' + bindings['TEST_ID']
+
     # Our application name and path to post events to.
     self.TEST_APP = bindings['TEST_APP']
     self.__path = 'applications/%s/tasks' % self.TEST_APP
+
+    # Custom userdata.
+    self.__custom_user_data_key = 'customUserData'
+    self.__custom_user_data_value = 'testCustomUserData'
 
     # The spinnaker stack decorator for our resources.
     self.TEST_STACK = bindings['TEST_STACK']
@@ -61,10 +103,14 @@ class GoogleServerGroupTestScenario(sk.SpinnakerTestScenario):
     self.TEST_ZONE = bindings['TEST_GCE_ZONE']
 
     # Resource names used among tests.
-    self.__cluster_name = '%s-%s' % (self.TEST_APP, self.TEST_STACK)
-    self.__server_group_name = '%s-v000' % self.__cluster_name
-    self.__cloned_server_group_name = '%s-v001' % self.__cluster_name
-    self.__lb_name = '%s-%s-fe' % (self.TEST_APP, self.TEST_STACK)
+    self.__cluster_name = frigga.Naming.cluster(
+        app=self.TEST_APP, stack=self.TEST_STACK)
+    self.__server_group_name = frigga.Naming.server_group(
+        app=self.TEST_APP, stack=self.TEST_STACK, version='v000')
+    self.__cloned_server_group_name = frigga.Naming.server_group(
+        app=self.TEST_APP, stack=self.TEST_STACK, version='v001')
+    self.__lb_name = frigga.Naming.cluster(
+        app=self.TEST_APP, stack=self.TEST_STACK, detail='fe')
 
   def create_load_balancer(self):
     job = [{
@@ -91,10 +137,11 @@ class GoogleServerGroupTestScenario(sk.SpinnakerTestScenario):
     builder = gcp.GcpContractBuilder(self.gcp_observer)
     (builder.new_clause_builder('Load Balancer Created', retryable_for_secs=30)
      .list_resource('forwardingRules')
-     .contains_path_value('name', self.__lb_name))
+     .EXPECT(ov_factory.value_list_path_contains(
+         'name', jp.STR_SUBSTR(self.__lb_name))))
 
     payload = self.agent.make_json_payload_from_kwargs(
-        job=job, description='Server Group Test - create load balancer',
+        job=job, description=self.__mig_title + ' Test - create load balancer',
         application=self.TEST_APP)
 
     return st.OperationContract(
@@ -102,12 +149,11 @@ class GoogleServerGroupTestScenario(sk.SpinnakerTestScenario):
           title='create_load_balancer', data=payload, path=self.__path),
       contract=builder.build())
 
-  def create_instances(self):
+  def create_server_group(self):
     job = [{
       'application': self.TEST_APP,
       'stack': self.TEST_STACK,
       'credentials': self.bindings['SPINNAKER_GOOGLE_ACCOUNT'],
-      'zone': self.TEST_ZONE,
       'network': 'default',
       'targetSize': 1,
       'capacity': {
@@ -122,6 +168,7 @@ class GoogleServerGroupTestScenario(sk.SpinnakerTestScenario):
       'instanceMetadata': {
         'load-balancer-names': self.__lb_name
       },
+      'userData': self.__custom_user_data_key + '=' +  self.__custom_user_data_value,
       'cloudProvider': 'gce',
       'image': self.bindings['TEST_GCE_IMAGE_NAME'],
       'instanceType': 'f1-micro',
@@ -130,20 +177,35 @@ class GoogleServerGroupTestScenario(sk.SpinnakerTestScenario):
       'account': self.bindings['SPINNAKER_GOOGLE_ACCOUNT'],
       'user': 'integration-tests'
     }]
+    job[0].update(self.__mig_payload_extra)
 
     builder = gcp.GcpContractBuilder(self.gcp_observer)
-    (builder.new_clause_builder('Instance Created', retryable_for_secs=150)
-     .list_resource('instanceGroups')
-     .contains_path_value('name', self.__server_group_name))
+    (builder.new_clause_builder(self.__mig_title + 'Created',
+                                retryable_for_secs=150)
+     .list_resource(self.__mig_manager_name, **self.__mig_manager_kwargs)
+     .EXPECT(ov_factory.value_list_path_contains(
+         'name', jp.EQUIVALENT(self.__server_group_name))))
+
+    (builder.new_clause_builder('Instance template created',
+                                retryable_for_secs=150)
+     .list_resource('instanceTemplates')
+     .EXPECT(ov_factory.value_list_path_contains(
+         'properties/metadata/items',
+         jp.LIST_MATCHES([
+             jp.DICT_MATCHES({
+                 'key': jp.EQUIVALENT(self.__custom_user_data_key),
+                 'value': jp.EQUIVALENT(self.__custom_user_data_value)})
+         ])
+     )))
 
     payload = self.agent.make_json_payload_from_kwargs(
         job=job,
-        description='Server Group Test - create initial server group',
+        description=self.__mig_title + ' Test - create initial',
         application=self.TEST_APP)
 
     return st.OperationContract(
       self.new_post_operation(
-          title='create_instances', data=payload, path=self.__path),
+          title='create_server_group', data=payload, path=self.__path),
       contract=builder.build())
 
   def resize_server_group(self):
@@ -167,16 +229,17 @@ class GoogleServerGroupTestScenario(sk.SpinnakerTestScenario):
       'cloudProvider': 'gce',
       'user': 'integration-tests'
     }]
+    job[0].update(self.__mig_payload_extra)
 
     builder = gcp.GcpContractBuilder(self.gcp_observer)
-    (builder.new_clause_builder('Server Group Resized', retryable_for_secs=90)
-     .inspect_resource('instanceGroups',
-                       self.__server_group_name,
-                       ['--zone', self.TEST_ZONE])
-     .contains_path_eq('size', 2))
+    (builder.new_clause_builder(
+        self.__mig_title + ' Resized', retryable_for_secs=90)
+     .inspect_resource(self.__mig_resource_name, self.__server_group_name,
+                       **self.__mig_resource_kwargs)
+     .EXPECT(ov_factory.value_list_path_contains('size', jp.NUM_EQ(2))))
 
     payload = self.agent.make_json_payload_from_kwargs(
-        job=job, description='Server Group Test - resize to 2 instances',
+        job=job, description=self.__mig_title + ' Test - resize to 2 instances',
         application=self.TEST_APP)
 
     return st.OperationContract(
@@ -216,14 +279,28 @@ class GoogleServerGroupTestScenario(sk.SpinnakerTestScenario):
       'account': self.bindings['SPINNAKER_GOOGLE_ACCOUNT'],
       'user': 'integration-tests'
     }]
+    job[0].update(self.__mig_payload_extra)
 
     builder = gcp.GcpContractBuilder(self.gcp_observer)
-    (builder.new_clause_builder('Server Group Cloned', retryable_for_secs=90)
-     .list_resource('instanceGroupManagers')
-     .contains_path_value('baseInstanceName', self.__cloned_server_group_name))
+    (builder.new_clause_builder(self.__mig_title + ' Cloned',
+                                retryable_for_secs=90)
+       .list_resource(self.__mig_manager_name, **self.__mig_manager_kwargs)
+       .EXPECT(ov_factory.value_list_path_contains(
+           'baseInstanceName', jp.STR_SUBSTR(self.__cloned_server_group_name))))
+    (builder.new_clause_builder('Instance template preserved',
+                                retryable_for_secs=150)
+       .list_resource('instanceTemplates')
+       .EXPECT(ov_factory.value_list_path_contains(
+           'properties/metadata/items',
+           jp.LIST_MATCHES([
+               jp.DICT_MATCHES({
+                   'key': jp.EQUIVALENT(self.__custom_user_data_key),
+                   'value': jp.EQUIVALENT(self.__custom_user_data_value)})
+           ])))
+    )
 
     payload = self.agent.make_json_payload_from_kwargs(
-        job=job, description='Server Group Test - clone server group',
+        job=job, description=self.__mig_title + ' Test - clone server group',
         application=self.TEST_APP)
 
     return st.OperationContract(
@@ -244,18 +321,22 @@ class GoogleServerGroupTestScenario(sk.SpinnakerTestScenario):
       'credentials': self.bindings['SPINNAKER_GOOGLE_ACCOUNT'],
       'user': 'integration-tests'
     }]
+    job[0].update(self.__mig_payload_extra)
 
     builder = gcp.GcpContractBuilder(self.gcp_observer)
-    (builder.new_clause_builder('Server Group Disabled', retryable_for_secs=90)
-     .list_resource('instanceGroupManagers')
-     .contains_path_value('baseInstanceName', self.__server_group_name)
-     .excludes_match({
-          'baseInstanceName': jp.STR_SUBSTR(self.__server_group_name),
-          'targetPools': jp.LIST_MATCHES([jp.STR_SUBSTR('https')])
-          }))
+    (builder.new_clause_builder(self.__mig_title + ' Disabled',
+                                retryable_for_secs=90)
+     .list_resource(self.__mig_manager_name, **self.__mig_manager_kwargs)
+     .EXPECT(ov_factory.value_list_path_contains(
+         'baseInstanceName', jp.STR_SUBSTR(self.__server_group_name)))
+     .AND(ov_factory.value_list_excludes(
+         jp.DICT_MATCHES({
+            'baseInstanceName': jp.STR_SUBSTR(self.__server_group_name),
+            'targetPools': jp.LIST_MATCHES([jp.STR_SUBSTR('https')])
+            }))))
 
     payload = self.agent.make_json_payload_from_kwargs(
-        job=job, description='Server Group Test - disable server group',
+        job=job, description=self.__mig_title + ' Test - disable server group',
         application=self.TEST_APP)
 
     return st.OperationContract(
@@ -276,17 +357,20 @@ class GoogleServerGroupTestScenario(sk.SpinnakerTestScenario):
       'credentials': self.bindings['SPINNAKER_GOOGLE_ACCOUNT'],
       'user': 'integration-tests'
     }]
+    job[0].update(self.__mig_payload_extra)
 
     builder = gcp.GcpContractBuilder(self.gcp_observer)
-    (builder.new_clause_builder('Server Group Enabled', retryable_for_secs=90)
-     .list_resource('instanceGroupManagers')
-     .contains_match({
-          'baseInstanceName': jp.STR_SUBSTR(self.__server_group_name),
-          'targetPools': jp.LIST_MATCHES([jp.STR_SUBSTR( 'https')])
-          }))
+    (builder.new_clause_builder(self.__mig_title + ' Enabled',
+                                retryable_for_secs=90)
+     .list_resource(self.__mig_manager_name, **self.__mig_manager_kwargs)
+     .EXPECT(ov_factory.value_list_contains(
+         jp.DICT_MATCHES({
+            'baseInstanceName': jp.STR_SUBSTR(self.__server_group_name),
+            'targetPools': jp.LIST_MATCHES([jp.STR_SUBSTR( 'https')])
+            }))))
 
     payload = self.agent.make_json_payload_from_kwargs(
-        job=job, description='Server Group Test - enable server group',
+        job=job, description=self.__mig_title + ' Test - enable server group',
         application=self.TEST_APP)
 
     return st.OperationContract(
@@ -308,14 +392,17 @@ class GoogleServerGroupTestScenario(sk.SpinnakerTestScenario):
       'credentials': self.bindings['SPINNAKER_GOOGLE_ACCOUNT'],
       'user': 'integration-tests'
     }]
+    job[0].update(self.__mig_payload_extra)
 
     builder = gcp.GcpContractBuilder(self.gcp_observer)
-    (builder.new_clause_builder('Server Group Destroyed', retryable_for_secs=90)
-     .list_resource('instanceGroupManagers')
-     .excludes_path_value('baseInstanceName', serverGroupName))
+    (builder.new_clause_builder(self.__mig_title + ' Destroyed',
+                                retryable_for_secs=90)
+     .list_resource(self.__mig_manager_name, **self.__mig_manager_kwargs)
+     .EXPECT(ov_factory.value_list_path_excludes(
+         'baseInstanceName', jp.STR_SUBSTR(serverGroupName))))
 
     payload = self.agent.make_json_payload_from_kwargs(
-        job=job, description='Server Group Test - destroy server group',
+        job=job, description=self.__mig_title + ' Test - destroy server group',
         application=self.TEST_APP)
 
     return st.OperationContract(
@@ -327,9 +414,9 @@ class GoogleServerGroupTestScenario(sk.SpinnakerTestScenario):
     job = [{
       "loadBalancerName": self.__lb_name,
       "networkLoadBalancerName": self.__lb_name,
-      "region": "us-central1",
+      "region": self.TEST_REGION,
       "type": "deleteLoadBalancer",
-      "regions": ["us-central1"],
+      "regions": [self.TEST_REGION],
       "credentials": self.bindings['SPINNAKER_GOOGLE_ACCOUNT'],
       "cloudProvider": "gce",
       "user": "integration-tests"
@@ -338,10 +425,11 @@ class GoogleServerGroupTestScenario(sk.SpinnakerTestScenario):
     builder = gcp.GcpContractBuilder(self.gcp_observer)
     (builder.new_clause_builder('Load Balancer Created', retryable_for_secs=30)
      .list_resource('forwardingRules')
-     .excludes_path_value('name', self.__lb_name))
+     .EXPECT(ov_factory.value_list_path_excludes(
+         'name', jp.STR_SUBSTR(self.__lb_name))))
 
     payload = self.agent.make_json_payload_from_kwargs(
-        job=job, description='Server Group Test - delete load balancer',
+        job=job, description=self.__mig_title + ' Test - delete load balancer',
         application=self.TEST_APP)
 
     return st.OperationContract(
@@ -377,13 +465,15 @@ class GoogleServerGroupTest(st.AgentTestCase):
     self.run_test_case(self.scenario.create_load_balancer())
 
   def test_b_create_server_group(self):
-    self.run_test_case(self.scenario.create_instances())
+    self.run_test_case(self.scenario.create_server_group(),
+                       poll_every_secs=3)
 
   def test_c_resize_server_group(self):
     self.run_test_case(self.scenario.resize_server_group())
 
   def test_d_clone_server_group(self):
     self.run_test_case(self.scenario.clone_server_group(),
+                       poll_every_secs=3,
                        # TODO(ewiseblatt): 20160314
                        # There is a lock contention race condition
                        # in clouddriver that causes intermittent failure.
@@ -396,10 +486,12 @@ class GoogleServerGroupTest(st.AgentTestCase):
     self.run_test_case(self.scenario.enable_server_group())
 
   def test_g_destroy_server_group_v000(self):
-    self.run_test_case(self.scenario.destroy_server_group('v000'))
+    self.run_test_case(self.scenario.destroy_server_group('v000'),
+                       poll_every_secs=5)
 
   def test_h_destroy_server_group_v001(self):
-    self.run_test_case(self.scenario.destroy_server_group('v001'))
+    self.run_test_case(self.scenario.destroy_server_group('v001'),
+                       poll_every_secs=5)
 
   def test_z_delete_load_balancer(self):
     self.run_test_case(self.scenario.delete_load_balancer())
@@ -407,9 +499,11 @@ class GoogleServerGroupTest(st.AgentTestCase):
 
 def main():
 
+  # These are only used by our scenario.
+  # We'll rebind them in the constructor so we can consider command-line args.
   defaults = {
-    'TEST_STACK': GoogleServerGroupTestScenario.DEFAULT_TEST_ID,
-    'TEST_APP': 'gcpsvrgrptst' + GoogleServerGroupTestScenario.DEFAULT_TEST_ID
+    'TEST_STACK': '',
+    'TEST_APP': '',
   }
 
   return citest.base.TestRunner.main(

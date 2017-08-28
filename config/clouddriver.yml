@@ -39,6 +39,8 @@ azure:
       appKey: ${providers.azure.primaryCredentials.appKey}
       tenantId: ${providers.azure.primaryCredentials.tenantId}
       subscriptionId: ${providers.azure.primaryCredentials.subscriptionId}
+      defaultResourceGroup: ${providers.azure.primaryCredentials.defaultResourceGroup}
+      defaultKeyVault: ${providers.azure.primaryCredentials.defaultKeyVault}
 
 google:
   enabled: ${providers.google.enabled:false}
@@ -49,6 +51,15 @@ google:
       jsonPath: ${providers.google.primaryCredentials.jsonPath}
       consul:
         enabled: ${providers.google.primaryCredentials.consul.enabled:false}
+      # Specify the project id of each GCP project whose images you want indexed and
+      # made available to this account. Each project must have granted the IAM role
+      # compute.imageUser to the service account associated with the json key referenced
+      # above, as well as to the 'Google APIs service account' automatically created for
+      # the project being managed (should look similar to
+      # 12345678912@cloudservices.gserviceaccount.com).
+      # You can read more about sharing images across GCP projects here:
+      # https://cloud.google.com/compute/docs/images/sharing-images-across-projects#granting_a_user_access_to_images
+      # imageProjects:
 
 cf:
   enabled: ${providers.cf.enabled:false}
@@ -93,13 +104,27 @@ openstack:
         pollTimeout: 60
         pollInterval: 5
 
+appengine:
+  enabled: ${providers.appengine.enabled:false}
+
+  accounts:
+    - name: ${providers.appengine.primaryCredentials.name}
+      project: ${providers.appengine.primaryCredentials.project}
+      jsonPath: ${providers.appengine.primaryCredentials.jsonPath}
+      sshPrivateKeyFilePath: ${providers.appengine.primaryCredentials.sshPrivateKeyFilePath}
+      sshPrivateKeyPassphrase: ${providers.appengine.primaryCredentials.sshPrivateKeyPassphrase}
+      gitHttpsUsername: ${providers.appengine.primaryCredentials.gitHttpsUsername}
+      gitHttpsPassword: ${providers.appengine.primaryCredentials.gitHttpsPassword}
+      githubOAuthAccessToken: ${providers.appengine.primaryCredentials.githubOAuthAccessToken}
+
 dockerRegistry:
   enabled: ${providers.dockerRegistry.enabled:false}
   accounts:
     - name: ${providers.dockerRegistry.primaryCredentials.name}
       address: ${providers.dockerRegistry.primaryCredentials.address}
       username: ${providers.dockerRegistry.primaryCredentials.username:}
-      passwordFile: ${providers.dockerRegistry.primaryCredentials.passwordFile}
+      passwordFile: ${providers.dockerRegistry.primaryCredentials.passwordFile:}
+      repositories: ${providers.dockerRegistry.primaryCredentials.repository:}
 
 credentials:
   primaryAccountTypes: ${providers.aws.primaryCredentials.name}, ${providers.google.primaryCredentials.name}, ${providers.cf.primaryCredentials.name}, ${providers.azure.primaryCredentials.name}
@@ -117,10 +142,3 @@ spectator:
     enabled: ${services.stackdriver.enabled}
     projectName: ${services.stackdriver.projectName}
     credentialsPath: ${services.stackdriver.credentialsPath}
-
-stackdriver:
-  hints:
-    - name: controller.invocations
-      labels:
-      - account
-      - region

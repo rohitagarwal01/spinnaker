@@ -88,7 +88,11 @@ class Refresher(object):
   commands. This class is intended for cross-cutting management.
   """
 
-  __OPTIONAL_REPOSITORIES = [SourceRepository('citest', 'google')]
+  __OPTIONAL_REPOSITORIES = [
+      SourceRepository('citest', 'google'),
+      SourceRepository('spinnaker-monitoring', 'spinnaker'),
+      SourceRepository('halyard', 'spinnaker')]
+
   __REQUIRED_REPOSITORIES = [
       SourceRepository('spinnaker', 'spinnaker'),
       SourceRepository('clouddriver', 'spinnaker'),
@@ -306,6 +310,9 @@ class Refresher(object):
       repository_dir = get_repository_dir(name)
       if not os.path.exists(repository_dir):
           self.pull_from_origin(repository)
+          if not os.path.exists(repository_dir):
+            return
+
       branch = self.get_local_branch_name(name)
       if branch != 'master':
           sys.stderr.write('Skipping {name} because it is in branch={branch}.\n'
@@ -427,15 +434,8 @@ d=$(dirname "$0")
 cd "$d"
 LOG_DIR=${{LOG_DIR:-../logs}}
 
-if [[ node_modules -ot .git ]]; then
-  # Update npm, otherwise assume nothing changed and we're good.
-  npm install >& "$LOG_DIR/deck.log"
-else
-  echo "deck npm node_modules looks up to date already."
-fi
-
-# Append to the log file we just started.
-bash -c "(npm start >> '$LOG_DIR/{name}.log') 2>&1\
+npm install >& "$LOG_DIR/{name}.log"
+bash -c "(./start.sh >> '$LOG_DIR/{name}.log') 2>&1\
  | tee -a '$LOG_DIR/{name}.log' >& '$LOG_DIR/{name}.err' &"
 """.format(name=name))
       os.chmod(path, 0777)
@@ -539,6 +539,13 @@ bash -c "(npm start >> '$LOG_DIR/{name}.log') 2>&1\
                                ' If the user is "default" then use the'
                                ' authoritative (upstream) repository.')
 
+      parser.add_argument('--update_run_scripts', default=True,
+                          action='store_true',
+                          help='Update the run script for each component.')
+      parser.add_argument('--noupdate_run_scripts',
+                          dest='update_run_scripts',
+                          action='store_false')
+
   @classmethod
   def main(cls):
     parser = argparse.ArgumentParser()
@@ -548,12 +555,20 @@ bash -c "(npm start >> '$LOG_DIR/{name}.log') 2>&1\
 
     refresher = cls(options)
     in_repository_url = refresher.get_remote_repository_url('.')
-    if in_repository_url:
+    expected_dir = os.path.dirname(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+    if (in_repository_url
+        and os.path.basename(in_repository_url).startswith('spinnaker')):
       sys.stderr.write(
-          'ERROR: You cannot run this script from within a local repository.\n'
-          ' This directory is from "{url}".\n'
-          ' Did you intend to be in the parent directory?\n'
-        .format(url=in_repository_url))
+          'ERROR: Assuming you did not intend to run this from inside'
+          ' your spinnaker repo.\n'
+          '   This directory is from the repository:\n'
+          '      {url}.\n'
+          '   The normal use case would be to run this from:\n'
+          '      {expected_dir}\n'
+          '   to manage this repo alongside the others.\n'
+          .format(url=in_repository_url, expected_dir=expected_dir))
       return -1
 
     try:
@@ -579,7 +594,10 @@ bash -c "(npm start >> '$LOG_DIR/{name}.log') 2>&1\
     if refresher.pull_branch:
         nothing = False
         refresher.pull_all_from_origin()
-    refresher.update_spinnaker_run_scripts()
+
+    if options.update_run_scripts:
+      print 'Updating Spinnaker component run scripts'
+      refresher.update_spinnaker_run_scripts()
 
     if nothing:
       sys.stderr.write('No pull/push options were specified.\n')

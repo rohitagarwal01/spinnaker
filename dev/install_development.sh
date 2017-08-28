@@ -35,6 +35,7 @@ process_args "$@"
 sudo apt-get install -y git
 sudo apt-get install -y zip
 sudo apt-get install -y build-essential
+sudo apt-get install -y python-virtualenv libffi-dev libssl-dev python-dev
 
 # redis normally comes in from a dependency on spinnaker,
 # which we have not installed.
@@ -70,3 +71,9 @@ fi
 
 # Install google command-line tool (for convenience)
 # in the bootstrap_dev.sh because it typically is not installed as root.
+
+# Install Halyard (https://github.com/spinnaker/halyard)
+cd /tmp
+curl -s -O https://raw.githubusercontent.com/spinnaker/halyard/master/install/stable/InstallHalyard.sh
+chmod +x ./InstallHalyard.sh
+sudo bash -c ./InstallHalyard.sh

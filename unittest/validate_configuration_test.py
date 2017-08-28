@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+import sys
 import tempfile
 import unittest
 
@@ -222,7 +223,7 @@ class ValidateConfigurationTest(unittest.TestCase):
     def test_verify_baseUrl_only_host_port_path_bad(self):
         tests = {
             'onlypath': '/bad',
-            'undef': 'localhost/${undef}',
+            'undef': 'localhost/${unknown}',
             'badescape0': 'host/bad%',
             'badescape1': 'host/bad%1',
             'badescapeX': 'host/bad%gg',
@@ -341,6 +342,6 @@ class ValidateConfigurationTest(unittest.TestCase):
 if __name__ == '__main__':
   loader = unittest.TestLoader()
   suite = loader.loadTestsFromTestCase(ValidateConfigurationTest)
-  unittest.TextTestRunner(verbosity=2).run(suite)
-
+  got = unittest.TextTestRunner(verbosity=2).run(suite)
+  sys.exit(len(got.errors) + len(got.failures))
 

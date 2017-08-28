@@ -31,7 +31,7 @@ instance, or you have a providers.google.primaryCredentials.jsonPath configured
 with service account credentials.
 
 Usage:
-   --echo=(cassandra|inMemory)  --front50=(cassandra|gcs|s3)
+   --echo=(cassandra|inMemory)  --front50=(cassandra|gcs|s3|azs)
    [--bucket=<storage_bucket_name>]
    [--change_local=(true|false)]
    [--change_defaults=(true|false)]
@@ -52,12 +52,16 @@ from configurator import Configurator
 
 ECHO_CHOICES = ['cassandra', 'inMemory']
 
-FRONT50_CHOICES = ['cassandra', 's3', 'gcs', 'redis']
+FRONT50_CHOICES = ['cassandra', 's3', 'gcs', 'redis', 'azs']
 
-_ECHO_KEYS = ['echo.cassandra.enabled', 'echo.inMemory.enabled']
-_FRONT50_KEYS = ['front50.cassandra.enabled', 'front50.redis.enabled',
-                 'front50.s3.enabled', 'front50.gcs.enabled',
-                 'front50.storage_bucket']
+_ECHO_KEYS = ['services.echo.cassandra.enabled',
+              'services.echo.inMemory.enabled']
+_FRONT50_KEYS = ['services.front50.cassandra.enabled',
+                 'services.front50.redis.enabled',
+                 'services.front50.s3.enabled',
+                 'services.front50.gcs.enabled',
+                 'services.front50.storage_bucket',
+                 'services.front50.azs.enabled']
 
 SPINNAKER_INSTALLED_PATH = '/opt/spinnaker/cassandra/SPINNAKER_INSTALLED_CASSANDRA'
 SPINNAKER_DISABLED_PATH = '/opt/spinnaker/cassandra/SPINNAKER_DISABLED_CASSANDRA'
@@ -110,11 +114,12 @@ class CassandraChanger(object):
               'front50': {'cassandra': {'enabled': options.front50 == 'cassandra'},
                           'redis': {'enabled': options.front50 == 'redis'},
                           's3': {'enabled': options.front50 == 's3'},
-                          'gcs': {'enabled': options.front50 == 'gcs'}
+                          'gcs': {'enabled': options.front50 == 'gcs'},
+                          'azs': {'enabled': options.front50 == 'azs'}
                          }}
     if options.bucket:
         config['front50']['storage_bucket'] = options.bucket
-    self.__bindings.import_dict(config)
+    self.__bindings.import_dict({'services': config})
 
   def disable_cassandra(self):
     if os.path.exists(SPINNAKER_INSTALLED_PATH):
@@ -165,7 +170,7 @@ class CassandraChanger(object):
 
   def change(self):
     paths = []
-    if self.__options.change_defaults:
+    if str(self.__options.change_defaults).lower() == "true":
         path = '/opt/spinnaker/config/spinnaker.yml'
         with open(path, 'r'):
           paths.append(path)
@@ -179,13 +184,15 @@ class CassandraChanger(object):
         except IOError:
           pass
 
-    if self.__options.change_local:
-        path = '/opt/spinnaker/config/spinnaker-local.yml'
+    if str(self.__options.change_local).lower() == "true":
+      for path in ['/opt/spinnaker/config/spinnaker-local.yml',
+                   os.path.join(os.environ.get('HOME'),
+                                '.spinnaker', 'spinnaker-local.yml')]:
         try:
           with open(path, 'r'):
             paths.append(path)
         except IOError:
-          print 'Could not open {path}. Ignoring --change_local.'.format(path=path)
+          print 'Could not open {path} to apply --change_local.'.format(path=path)
 
     for path in paths:
         print 'Updating {path}'.format(path=path)

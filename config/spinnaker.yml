@@ -115,8 +115,18 @@ services:
       enabled: false
     gcs:
       enabled: false
+      project: ${providers.google.primaryCredentials.project}
+      jsonPath: ${providers.google.primaryCredentials.jsonPath}
     s3:
       enabled: false
+
+    # To use an Azure storage account instead of Cassandra:
+    # Disable Cassandra above, enable azs, and set the storage account name and key
+    azs:
+      enabled: false
+      storageAccountName:
+      storageAccountKey:
+      storageContainerName: front50
 
   gate:
     host: ${services.default.host}
@@ -168,6 +178,9 @@ services:
     baseUrl: ${services.rosco.baseUrl}
     extractBuildDetails: true
     allowMissingPackageInstallation: false
+
+  chaos:
+    enabled: false
 
   docker:
     # This target repository is used by the bakery to publish baked docker images.
@@ -227,7 +240,7 @@ services:
 
   spectator:
     webEndpoint:
-      enabled: false
+      enabled: true
 
   stackdriver:
     enabled: ${SPINNAKER_STACKDRIVER_ENABLED:false}
@@ -297,12 +310,13 @@ providers:
     primaryCredentials:
       name: my-azure-account
 
-      # To set Azure credentials, enter your Azure supscription values for:
-      # clientId, appKey, tenantId, and subscriptionId.
+      # To set Azure credentials, enter your Azure subscription values for:
+      # clientId, appKey, tenantId, subscriptionId, and objectId.
       clientId:
       appKey:
       tenantId:
       subscriptionId:
+      objectId:
 
   titan:
     # If you want to deploy some services to titan,
@@ -332,10 +346,10 @@ providers:
     primaryCredentials:
       name: my-docker-registry-account
       address: ${SPINNAKER_DOCKER_REGISTRY:https://index.docker.io/}
-      repository: ${SPINNAKER_DOCKER_REPOSITORY:library/nginx}
-      username: ${SPINNAKER_DOCKER_USERNAME}
+      repository: ${SPINNAKER_DOCKER_REPOSITORY:}
+      username: ${SPINNAKER_DOCKER_USERNAME:}
       # A path to a plain text file containing the user's password
-      passwordFile: ${SPINNAKER_DOCKER_PASSWORD_FILE}
+      passwordFile: ${SPINNAKER_DOCKER_PASSWORD_FILE:}
 
   openstack:
     # This default configuration uses the same environment variable names set in
@@ -343,6 +357,7 @@ providers:
     # http://docs.openstack.org/user-guide/common/cli-set-environment-variables-using-openstack-rc.html
     # for details on the OpenStack RC file.
     enabled: false
+    defaultRegion: ${SPINNAKER_OPENSTACK_DEFAULT_REGION:RegionOne}
     primaryCredentials:
       name: my-openstack-account
       authUrl: ${OS_AUTH_URL}
@@ -352,3 +367,18 @@ providers:
       domainName: ${OS_USER_DOMAIN_NAME:Default}
       regions: ${OS_REGION_NAME:RegionOne}
       insecure: false
+
+  appengine:
+    enabled: ${SPINNAKER_APPENGINE_ENABLED:false}
+
+    primaryCredentials:
+      name: my-appengine-account
+      project: ${SPINNAKER_APPENGINE_PROJECT_ID:}
+      jsonPath: ${SPINNAKER_APPENGINE_PROJECT_CREDENTIALS_PATH:}
+      sshPrivateKeyFilePath: ${SPINNAKER_APPENGINE_PRIVATE_KEY_FILE_PATH:}
+      sshPrivateKeyPassphrase: ${SPINNAKER_APPENGINE_PRIVATE_KEY_PASSPHRASE:}
+      gitHttpsUsername: ${SPINNAKER_APPENGINE_GIT_HTTPS_USERNAME:}
+      gitHttpsPassword: ${SPINNAKER_APPENGINE_GIT_HTTPS_PASSWORD:}
+      githubOAuthAccessToken: ${SPINNAKER_APPENGINE_GITHUB_OAUTH_ACCESS_TOKEN:}
+
+management.security.enabled: false

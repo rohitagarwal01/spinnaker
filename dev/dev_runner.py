@@ -31,9 +31,11 @@ from spinnaker.fetch import is_aws_instance
 from spinnaker.fetch import is_google_instance
 from spinnaker.fetch import check_fetch
 from spinnaker.fetch import fetch
+from spinnaker.run import run_quick
 from spinnaker.yaml_util import YamlBindings
 from spinnaker.validate_configuration import ValidateConfig
 from spinnaker import spinnaker_runner
+
 
 def populate_aws_yml(content):
   aws_dict = {'enabled': False}
@@ -62,7 +64,7 @@ def populate_google_yml(content):
                  'defaultZone': 'us-central1-f',}
 
   google_dict['primaryCredentials'] = credentials
-
+  front50_dict = {}
   if is_google_instance():
       zone = os.path.basename(
            check_fetch(GOOGLE_INSTANCE_METADATA_URL + '/zone',
@@ -72,9 +74,13 @@ def populate_google_yml(content):
       google_dict['defaultZone'] = zone
       credentials['project'] = check_fetch(
             GOOGLE_METADATA_URL + '/project/project-id', google=True).content
+      front50_dict['storage_bucket'] = '${{{env}:{default}}}'.format(
+          env='SPINNAKER_DEFAULT_STORAGE_BUCKET',
+          default=credentials['project'].replace(':', '-').replace('.', '-'))
 
   bindings = YamlBindings()
   bindings.import_dict({'providers': {'google': google_dict}})
+  bindings.import_dict({'services': {'front50': front50_dict}})
   content = bindings.transform_yaml_source(content, 'providers.google.enabled')
   content = bindings.transform_yaml_source(
       content, 'providers.google.defaultRegion')
@@ -84,6 +90,8 @@ def populate_google_yml(content):
       content, 'providers.google.primaryCredentials.project')
   content = bindings.transform_yaml_source(
       content, 'providers.google.primaryCredentials.jsonPath')
+  content = bindings.transform_yaml_source(
+      content, 'services.front50.storage_bucket')
 
   return content
 
@@ -158,6 +166,13 @@ class DevRunner(spinnaker_runner.Runner):
       f.write(content)
     os.chmod(user_config_path, 0600)
 
+    change_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                               'install', 'change_cassandra.sh')
+    got = run_quick(change_path
+                    + ' --echo=inMemory --front50=gcs'
+                    + ' --change_defaults=false --change_local=true',
+                    echo=False)
+
   def __init__(self, installation_parameters=None):
     self.maybe_generate_clean_user_local()
     installation = installation_parameters or DevInstallationParameters
@@ -187,18 +202,19 @@ class DevRunner(spinnaker_runner.Runner):
     tail_jobs = []
     for subsystem in self.get_all_subsystem_names():
       path = os.path.join(log_dir, subsystem + '.err')
-      open(path, 'w').close()
+      if not os.path.exists(path):
+        open(path, 'w').close()
       tail_jobs.append(self.start_tail(path))
 
     return tail_jobs
 
   def get_deck_pid(self):
     """Return the process id for deck, or None."""
-    program='node ./node_modules/webpack-dev-server/bin/webpack-dev-server.js'
+    program='deck/node_modules/.bin/webpack-dev-server'
     stdout, stderr = subprocess.Popen(
         'ps -fwwwC node', stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         shell=True, close_fds=True).communicate()
-    match = re.search('(?m)^[^ ]+ +([0-9]+) .* {program}'.format(
+    match = re.search('(?m)^[^ ]+ +([0-9]+) .*/{program}'.format(
         program=program), stdout)
     return int(match.group(1)) if match else None
 
@@ -219,6 +235,8 @@ class DevRunner(spinnaker_runner.Runner):
     if pid:
       print 'Terminating deck in pid={pid}'.format(pid=pid)
       os.kill(pid, signal.SIGTERM)
+    else:
+      print 'deck was not running'
 
   def start_all(self, options):
     """Starts all the components then logs stderr to the console forever.
@@ -259,7 +277,7 @@ class DevRunner(spinnaker_runner.Runner):
     print """Spinnaker is now ready on port {port}.
 
 You can ^C (ctrl-c) to finish the script, which will stop emitting errors.
-Spinnaker will continue until you run ../spinnaker/dev/stop_dev.sh
+Spinnaker will continue until you run ./spinnaker/dev/stop_dev.sh
 """.format(port=deck_port)
 
     while True:

@@ -5,9 +5,9 @@ image:http://join.spinnaker.io/badge.svg[Slack Status,link=http://join.spinnaker
 = Using Spinnaker
 
 If you are only interested in using Spinnaker, please refer to the main
-Spinnaker site and http://www.spinnaker.io/docs/target-deployment-setup[Installation] guide.
+Spinnaker site and https://www.spinnaker.io/setup/[Installation] guide.
 
-If you want more information on how Spinnaker is designed, see the http://www.spinnaker.io/docs/overview[Documentation Overview].
+If you want more information on how Spinnaker is designed, see the https://www.spinnaker.io/concepts/[Documentation Overview].
 
 = Setting Up Spinnaker For Development
 
@@ -91,9 +91,9 @@ chmod 600 $HOME/.spinnaker/spinnaker-local.yml
 # However if you are not comfortable editing yml, you can copy the
 # entire file. The difference is that you may be overriding future
 # changes to default values that you otherwise would not care about.
-cp spinnaker/config/spinnaker.yml $HOME/spinnaker/spinnaker-local.yml
+cp spinnaker/config/spinnaker.yml $HOME/.spinnaker/spinnaker-local.yml
 
-$EDITOR $HOME/.emacs/spinnaker-local.yml
+$EDITOR $HOME/.spinnaker/spinnaker-local.yml
 ----
 
 If you are deployed onto a supported cloud provider (e.g., AWS or Google) and

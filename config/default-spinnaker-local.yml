@@ -54,11 +54,16 @@ providers:
       name: my-azure-account
 
       # To set Azure credentials, enter your Azure supscription values for:
-      # clientId, appKey, tenantId, and subscriptionId.
+      # clientId, appKey, tenantId, subscriptionId, and objectId.
       clientId:
       appKey:
       tenantId:
       subscriptionId:
+      objectId:
+      packerResourceGroup:
+      packerStorageAccount:
+      defaultResourceGroup:
+      defaultKeyVault:
 
   google:
     # For more information on configuring Google Cloud Platform (google), see
@@ -122,14 +127,17 @@ providers:
     primaryCredentials:
       name: my-docker-registry
       address: ${SPINNAKER_DOCKER_REGISTRY:https://index.docker.io/}
-      repository: ${SPINNAKER_DOCKER_REPOSITORY:library/nginx}
-      username: ${SPINNAKER_DOCKER_USERNAME}
+      repository: ${SPINNAKER_DOCKER_REPOSITORY:}
+      username: ${SPINNAKER_DOCKER_USERNAME:}
       # A path to a plain text file containing the user's password
-      passwordFile: ${SPINNAKER_DOCKER_PASSWORD_FILE}
+      passwordFile: ${SPINNAKER_DOCKER_PASSWORD_FILE:}
 
   openstack:
     # For more information on configuring Openstack clusters, see
     # http://www.spinnaker.io/v1.0/docs/target-deployment-configuration#section-openstack
+    # To obtain the correct settings log into your OpenStack UI (Horizon), click on "Access and Security" on the left
+    # sidebar, click on the API access tab and finally click on "Download Openstack RC file V3". The rc file
+    # contains the correct settings.
 
     enabled: ${SPINNAKER_OPENSTACK_ENABLED:false}
     primaryCredentials:
@@ -138,7 +146,32 @@ providers:
       username: ${OS_USERNAME}
       password: ${OS_PASSWORD}
       projectName: ${OS_PROJECT_NAME}
+      domainName: ${OS_USER_DOMAIN_NAME}
       regions: ${OS_REGION_NAME:RegionOne}
+      # Enable this if your OpenStack Installation uses a self-signed certificate (use with caution)
+      # insecure: true
+
+  appengine:
+    enabled: ${SPINNAKER_APPENGINE_ENABLED:false}
+
+    primaryCredentials:
+      name: my-appengine-account
+      # The project is the Google Project ID for the project to manage with
+      # Spinnaker.
+      project: ${SPINNAKER_APPENGINE_PROJECT_ID:}
+      # The jsonPath is a path to the JSON service credentials downloaded
+      # from the Google Developer's Console.
+      jsonPath: ${SPINNAKER_APPENGINE_PROJECT_CREDENTIALS_PATH:}
+      # The path and password to an SSH private key to be used when connecting with
+      # a remote git repository over SSH (optional).
+      sshPrivateKeyFilePath: ${SPINNAKER_APPENGINE_PRIVATE_KEY_FILE_PATH:}
+      sshPrivateKeyPassphrase: ${SPINNAKER_APPENGINE_PRIVATE_KEY_PASSPHRASE:}
+      # The username and password to be used when connecting with a remote git repository over HTTPS (optional).
+      gitHttpsUsername: ${SPINNAKER_APPENGINE_GIT_HTTPS_USERNAME:}
+      gitHttpsPassword: ${SPINNAKER_APPENGINE_GIT_HTTPS_PASSWORD:}
+      # The OAuth token provided by Github to be used when connecting with a remote git repository over HTTPS (optional).
+      # See https://help.github.com/articles/creating-an-access-token-for-command-line-use for more information.
+      githubOAuthAccessToken: ${SPINNAKER_APPENGINE_GITHUB_OAUTH_ACCESS_TOKEN:}
 
 services:
   default:
@@ -204,7 +237,7 @@ services:
 
   spectator:
     webEndpoint:
-      enabled: false
+      enabled: true
 
   stackdriver:
     enabled: false
@@ -243,6 +276,9 @@ services:
   fiat:
     enabled: false
 
+  chaos:
+    enabled: false
+
   front50:
     cassandra:
       enabled: true
@@ -257,6 +293,14 @@ services:
       enabled: false
     s3:
       enabled: false
+
+    # To use an Azure storage account instead of Cassandra:
+    # Disable Cassandra above, enable azs, and set the storage account name and key
+    azs:
+      enabled: false
+      storageAccountName:
+      storageAccountKey:
+      storageContainerName: front50
 
   echo:
     # Persistence mechanism to use

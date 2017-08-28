@@ -29,6 +29,7 @@ QUIET=false
 # Install dependencies but not spinnaker itself.
 DEPENDENCIES_ONLY=false
 
+MONITORING_CHOICES=(datadog, prometheus, stackdriver, undef)
 
 # We can only currently support limited releases
 # First guess what sort of operating system
@@ -55,17 +56,17 @@ else
   DISTRO=$(uname -s)
 fi
 
-# If not Ubuntu 14.xx.x or higher
+# If not Ubuntu 14.xx.x 
 
 if [[ "$DISTRO" == "Ubuntu" ]]; then
-  if [[ "${DISTRIB_RELEASE%%.*}" -lt 14 ]]; then
+  if [[ "${DISTRIB_RELEASE%%.*}" -ne 14 ]]; then
     echo "Not a supported version of Ubuntu"
-    echo "Version is $DISTRIB_RELEASE we require 14.04 or higher"
+    echo "Version is $DISTRIB_RELEASE we require 14.04.x LTS"
     exit 1
   fi
 else
   echo "Not a supported operating system"
-  echo "Recommend you use Ubuntu 14.04 or higher"
+  echo "Only Ubuntu 14.04.x LTS is supported"
   exit 1
 fi
 
@@ -75,7 +76,7 @@ function print_usage() {
 usage: $0 [--cloud_provider <aws|google|azure|none>]
     [--aws_region <region>] [--google_region <region>] [--azure_region <region>]
     [--quiet] [--dependencies_only]
-    [--google_cloud_logging] [--google_cloud_monitoring]
+    [--google_cloud_logging] [--monitoring]
     [--repository <debian repository url>]
     [--local-install] [--home_dir <path>]
 
@@ -110,10 +111,13 @@ usage: $0 [--cloud_provider <aws|google|azure|none>]
                                 Platform, but you may require additional
                                 authorization. See https://cloud.google.com/logging/docs/agent/authorization#install_private-key_authorization
 
-    --google_cloud_monitoring   Install Google Cloud Monitoring support. This
-                                is independent of installing on Google Cloud
-                                Platform, but you may require additional
-                                authorization. See https://cloud.google.com/monitoring/api/authentication
+    --monitoring (datadog|prometheus|stackdriver|undef)
+                                Install the Spinnaker Monitoring Daemon. This
+                                installs support to /opt/spinnaker-monitoring
+                                and --client_only support for the given system.
+                                This may not be fully configured or require
+                                additional values per system. For more info, see
+                                http://www.spinnaker.io/docs/monitoring-a-spinnaker-deployment
 
     --local-install             For Spinnaker and Java packages, download
                                 packages and install using dpkg instead of
@@ -217,8 +221,14 @@ function process_args() {
       --google_cloud_logging)
         GOOGLE_CLOUD_LOGGING="true"
         ;;
-      --google_cloud_monitoring)
-        GOOGLE_CLOUD_MONITORING="true"
+      --monitoring)
+        MONITORING="$1"
+        shift
+        if [[ ! ${MONITORING_CHOICES[*]} =~ "$MONITORING" ]]
+        then
+            echo "Unknown monitoring choice '$MONITORING'."
+            exit -1
+        fi
         ;;
       --dependencies_only)
         CLOUD_PROVIDER="none"
@@ -425,7 +435,7 @@ function add_apt_repositories() {
   # Java 8
   # https://launchpad.net/~openjdk-r/+archive/ubuntu/ppa
   add-apt-repository -y ppa:openjdk-r/ppa
-  apt-get update
+  apt-get update ||:
 }
 
 function install_java() {
@@ -450,8 +460,7 @@ function install_platform_dependencies() {
 
   if [[ -z "$google_scopes" ]]; then
     # Not on GCP
-    if [[ "$GOOGLE_CLOUD_LOGGING" == "true" ]] \
-         || [[ "$GOOGLE_CLOUD_MONITORING" == "true" ]]; then
+    if [[ "$GOOGLE_CLOUD_LOGGING" == "true" ]]; then
       if [[ ! -f /etc/google/auth/application_default_credentials.json ]];
       then
         echo "You may need to add Google Project Credentials."
@@ -465,19 +474,6 @@ function install_platform_dependencies() {
     # However, if on google, then certain scopes are required.
     # The add_google_cloud_logging script checks the scope and warns.
     curl -s -L https://raw.githubusercontent.com/spinnaker/spinnaker/master/google/google_cloud_logging/add_google_cloud_logging.sh | sudo bash
-  fi
-
-  if [[ "$GOOGLE_CLOUD_MONITORING" == "true" ]]; then
-    # This can be installed on any platform, so dont scope to google.
-    # However, if on google, then certain scopes are required.
-    curl -s https://repo.stackdriver.com/stack-install.sh | sudo bash
-    if [[ ! -z "$google_scopes" ]] && [[ $scopes != *"monitoring.write"* ]]; then
-      # This is not necessarily bad because we might be using this instance
-      # to create an image (e.g. packer). Only the runtime instances need
-      # this scope.
-      echo "Missing scope 'https://www.googleapis.com/auth/monitoring.write'"
-      echo "Google Cloud Monitoring will not be able to send data upstream."
-    fi
   fi
 }
 
@@ -523,9 +519,9 @@ function install_redis_server() {
 function install_apache2() {
   # If apache2 is installed, we want to do as little modification
   # as possible to the existing installation.
-  if ! dpkg -s apache2
+  if ! $(dpkg -s apache2 2>/dev/null >/dev/null)
   then
-    echo "updating apt cache..." && apt-get -q update > /dev/null 2>&1
+    echo "updating apt cache..." && apt-get -q update > /dev/null 2>&1 ||:
     local apt_status=`apt-get -s -y --force-yes install apache2 > /dev/null 2>&1 ; echo $?`
     if [[ $apt_status -eq 0 ]]; then
       echo "apt sources contain apache2; installing using apt-get"
@@ -650,6 +646,16 @@ function install_spinnaker() {
     fi
   fi
 
+  if [[ "$MONITORING" != "" ]] && [[ "$MONITORING" != "none" ]]; then
+     sudo apt-get install -y --force-yes spinnaker-monitoring-daemon
+     sudo apt-get install -y --force-yes spinnaker-monitoring-third-party
+
+    if [[ "$MONITORING" != "undef" ]]; then
+      sudo /opt/spinnaker-monitoring/third_party/$MONITORING/install.sh \
+          --client_only
+      sudo service spinnaker-monitoring restart || true
+    fi
+  fi
 }
 
 set_defaults_from_environ
@@ -693,8 +699,8 @@ fi
 
 ## Packer
 mkdir $TEMPDIR/packer && pushd $TEMPDIR/packer
-curl -s -L -O https://releases.hashicorp.com/packer/0.10.2/packer_0.10.2_linux_amd64.zip
-unzip -u -o -q packer_0.10.2_linux_amd64.zip -d /usr/bin
+curl -s -L -O https://releases.hashicorp.com/packer/0.12.1/packer_0.12.1_linux_amd64.zip
+unzip -u -o -q packer_0.12.1_linux_amd64.zip -d /usr/bin
 popd
 rm -rf $TEMPDIR/packer
 
@@ -713,7 +719,7 @@ if [[ "$INSTALL_CASSANDRA" != "false" ]]; then
   cqlsh -f "/opt/spinnaker/cassandra/create_echo_keyspace.cql"
   cqlsh -f "/opt/spinnaker/cassandra/create_front50_keyspace.cql"
 else
-  /opt/spinnaker/install/change_cassandra.sh --echo=inMemory --front50=gcs --change_defaults=true --change_local=false
+  /opt/spinnaker/install/change_cassandra.sh --echo=inMemory --front50=gcs --change_defaults=true --change_local=true
 fi
 
 # Write values to /etc/default/spinnaker.

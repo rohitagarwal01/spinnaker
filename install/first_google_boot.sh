@@ -25,7 +25,6 @@ set -u
 AWS_DIR=/home/spinnaker/.aws
 KUBE_DIR=/home/spinnaker/.kube
 KUBE_VERSION=v1.3.4
-GCLOUD_VERSION=125.0.0
 # Google Container Registry (GCR) password file directory.
 GCR_DIR=/home/spinnaker/.gcr
 SPINNAKER_INSTALL_DIR=/opt/spinnaker
@@ -41,6 +40,7 @@ METADATA_URL="http://metadata.google.internal/computeMetadata/v1"
 INSTANCE_METADATA_URL="$METADATA_URL/instance"
 
 SPINNAKER_SUBSYSTEMS="spinnaker-clouddriver spinnaker-deck spinnaker-echo spinnaker-fiat spinnaker-front50 spinnaker-gate spinnaker-igor spinnaker-orca spinnaker-rosco spinnaker"
+SPINNAKER_DEPENDENCIES="redis-server"
 
 # By default we'll tradeoff the utmost in security for less startup latency
 # (often several minutes worth if there are any OS updates at all).
@@ -205,7 +205,6 @@ function attempt_write_kube_credentials() {
 
   local kube_cluster=$(get_instance_metadata_attribute "kube_cluster")
   local kube_zone=$(get_instance_metadata_attribute "kube_zone")
-
   local kube_config=$(get_instance_metadata_attribute "kube_config")
 
   if [ -n "$kube_cluster" ] && [ -n "$kube_config" ]; then
@@ -287,7 +286,7 @@ function extract_spinnaker_gcr_credentials() {
 
     if [ -z "$gcr_account" ]; then
       # This service account is enabled with the Compute API.
-      gcr_account="${MY_PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
+      gcr_account=$(curl -s -H "Metadata-Flavor: Google" "$METADATA_URL/instance/service-accounts/default/email")
       clear_instance_metadata "gcr_account"
     fi
 
@@ -317,6 +316,24 @@ function extract_spinnaker_gcr_credentials() {
     echo "GCR not enabled"
     clear_instance_metadata "gcr_account"
     clear_instance_metadata "gcr_enabled"
+  fi
+}
+
+function do_experimental_startup() {
+  local install_monitoring=$(get_instance_metadata_attribute "install_monitoring")
+  if [[ ! -z $install_monitoring ]]; then
+     IFS=' ' read -r -a all_args <<< "$install_monitoring"
+     local which=${all_args[0]}
+     local flags=${all_args[@]: 1:${#all_args}}
+     /opt/spinnaker-monitoring/third_party/$which/install.sh ${flags[@]}
+
+     if [[ ! -f /opt/spinnaker-monitoring/registry ]]; then
+         mv /opt/spinnaker-monitoring/registry.example \
+            /opt/spinnaker-monitoring/registry
+     fi
+
+     service spinnaker-monitoring restart
+     clear_instance_metadata "install_monitoring"
   fi
 }
 
@@ -359,8 +376,6 @@ process_args
 echo "Stopping spinnaker while we configure it."
 stop spinnaker || true
 
-gcloud -q components update --version $GCLOUD_VERSION --no-user-output-enabled
-
 echo "$STATUS_PREFIX  Configuring Default Values"
 write_default_value "SPINNAKER_GOOGLE_ENABLED" "true"
 write_default_value "SPINNAKER_GOOGLE_PROJECT_ID" "$MY_PROJECT"
@@ -381,6 +396,8 @@ extract_spinnaker_credentials
 
 echo "$STATUS_PREFIX  Configuring Spinnaker"
 $SPINNAKER_INSTALL_DIR/scripts/reconfigure_spinnaker.sh
+
+do_experimental_startup
 
 
 # Replace this first time boot with the normal startup script
@@ -417,10 +434,10 @@ fi
 # This can take several minutes so we are performing it at the end after
 # spinnaker has already started and is available.
 
-apt-mark hold $SPINNAKER_SUBSYSTEMS
+apt-mark hold $SPINNAKER_SUBSYSTEMS $SPINNAKER_DEPENDENCIES
 apt-get -y update
 DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confold" -y dist-upgrade
-apt-mark unhold $SPINNAKER_SUBSYSTEMS
+apt-mark unhold $SPINNAKER_SUBSYSTEMS $SPINNAKER_DEPENDENCIES
 
 if [[ -f /opt/spinnaker/cassandra/SPINNAKER_INSTALLED_CASSANDRA ]]; then
   sed -i "s/start_rpc: false/start_rpc: true/" /etc/cassandra/cassandra.yaml

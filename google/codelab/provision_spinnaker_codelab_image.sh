@@ -20,6 +20,8 @@
 # specifically for creating a new (running) codelab image out of a fresh
 # spinnaker image.
 
+set -e
+
 if [[ `/usr/bin/id -u` -ne 0 ]]; then
   echo "$0 must be executed with root permissions; exiting"
   exit 1
@@ -30,10 +32,8 @@ if [[ ! -d "/opt/spinnaker/pylib" ]]; then
   exit 1
 fi
 
-service spinnaker stop
-service apache2 stop
-
-set -e
+service spinnaker stop || true
+service apache2 stop || true
 
 # this allows us to skip any interactive post-install configuration,
 # specifically around keeping defaults for files that were modified.
@@ -55,9 +55,11 @@ apt-get install -y git
 wget http://pkg.jenkins-ci.org/debian/binary/jenkins_2.1_all.deb
 # dpkg partially installs jenkins and fails
 dpkg -i jenkins_2.1_all.deb || true
+rm -f jenkins_2.1_all.deb
+
 # finish installing jenkins and its dependencies
 apt-get -f -y install
-sed -i "s/HTTP_PORT=.*/HTTP_PORT=9090/" /etc/default/jenkins
+sed -i "s/HTTP_PORT=.*/HTTP_PORT=5656/" /etc/default/jenkins
 
 # as jenkins, configure aptly
 cd /home/jenkins
@@ -72,7 +74,10 @@ sudo -u jenkins -H sh -c '/home/jenkins/aptly publish repo -architectures="amd64
 cd /var/lib/jenkins
 sudo -u jenkins -H sh -c 'wget https://storage.googleapis.com/codelab-jenkins-configuration/jenkins_dir.tar.gz'
 sudo -u jenkins -H sh -c 'tar -zxvf jenkins_dir.tar.gz'
+sudo -u jenkins -H sh -c 'rm jenkins_dir.tar.gz'
 sudo -u jenkins -H sh -c 'git clone https://github.com/kenzanlabs/hello-karyon-rxnetty.git'
+sudo -u jenkins -H sh -c 'cd /var/lib/jenkins/jobs/Hello-Build; rm -rf builds lastStable lastSuccessful scm-polling.log nextBuildNumber; echo 1 >> nextBuildNumber'
+
 service jenkins restart
 
 # configure nginx to serve the aptly repo and start it
@@ -94,15 +99,16 @@ server {
         }
 }
 EOF
+
+mv $(dirname $0)/first_codelab_boot.sh /opt/spinnaker/install
+chmod 755 /opt/spinnaker/install/first_codelab_boot.sh
+chown spinnaker:spinnaker /opt/spinnaker/install/first_codelab_boot.sh
+
+mv $(dirname $0)/codelab_config.py /opt/spinnaker/install
+chmod 644 /opt/spinnaker/install/codelab_config.py
+chown spinnaker:spinnaker /opt/spinnaker/install/codelab_config.py
+
 service nginx restart
-
-wget https://storage.googleapis.com/codelab-startup-script/first_codelab_boot.sh -O /opt/spinnaker/install/first_codelab_boot.sh
-chmod +x /opt/spinnaker/install/first_codelab_boot.sh
-
-# configure nested properties in igor -- harder than a `sed` one-liner
-curl -s -O https://raw.githubusercontent.com/spinnaker/spinnaker/master/pylib/spinnaker/codelab_config.py
-PYTHONPATH=/opt/spinnaker/pylib python codelab_config.py
-rm codelab_config.py
 
 service spinnaker restart
 service apache2 restart

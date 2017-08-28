@@ -1,32 +1,35 @@
 # Spinnaker on Kubernetes
 
-This guide will walk you through deploying Spinnaker to a running Kubernetes 
-cluster. The steps below assume that you will be using that Spinnaker installation 
-to manage and deploy other applications to that same Kubernetes cluster. 
-If you want to run Spinnaker on Kubernetes but deploy to another platform, 
-read [how to configure](http://www.spinnaker.io/docs/target-deployment-configuration) 
+> :warning: These instructions are being deprecated in favor of
+> [halyard](https://github.com/spinnaker/halyard).
+
+This guide will walk you through deploying Spinnaker to a running Kubernetes
+cluster. The steps below assume that you will be using that Spinnaker installation
+to manage and deploy other applications to that same Kubernetes cluster.
+If you want to run Spinnaker on Kubernetes but deploy to another platform,
+read [how to configure](http://www.spinnaker.io/docs/target-deployment-configuration)
 it first.
 
 ## If You're Feeling Paranoid...
 
 This setup relies on a few Docker images that you can build yourself if you
-don't trust the ones I provide. 
+don't trust the ones I provide.
 
 1. `gcr.io/kubernetes-spinnaker/redis-cluster:v2` can be rebuilt from
    `./images/redis`.
 
 2. `quay.io/spinnaker/SERVICE:master` can be rebuilt at head of
-   https://github.com/spinnaker/SERVICE
+   https://github.com/spinnaker/SERVICE . ( SERVICE refers to an individual Spinnaker component, e.g, deck, orca, clouddriver, etc. The full list can be found at https://quay.io/organization/spinnaker ).  
 
 ## Configuring Kubernetes
 
-> __Note__ Only make changes to the files suffixed with `-local.yml` in `./config/`, 
+> __Note__ Only make changes to the files suffixed with `-local.yml` in `./config/`,
 > every other file is liable to be deleted/overwritten.
 
 Make sure you have a running Kubernetes cluster, which is explained in more
 detail [here](http://www.spinnaker.io/v1.0/docs/target-deployment-setup#section-kubernetes-cluster-setup).
 The key takeaway is having a kubeconfig file sitting in `~/.kube/config` that
-can authenticate with the cluster you want to deploy Spinnaker to. 
+can authenticate with the cluster you want to deploy Spinnaker to.
 Once that is all squared away, make sure that running `$ kubectl config
 current-context` refers to the cluster you want to have Spinnaker running in.
 (You may need to update `kubectl` for the previous command to work).
@@ -45,16 +48,16 @@ kubernetes:
     - name: my-kubernetes-account
       dockerRegistries: # WARNING! only include configured accounts here
         - accountName: my-gcr-account
-        - accountName: my-docker-account 
+        - accountName: my-docker-account
 ```
 
 ### GCR
 
 If you want to use Google Container Registry (GCR), you'll need to provide a
-valid service account key to Spinnaker that has at least `read-only` access to 
+valid service account key to Spinnaker that has at least `read-only` access to
 the storage buckets in your projects containing your Docker images.
 [Here](https://cloud.google.com/iam/docs/service-accounts) is some background
-reading on service accounts in GCP if this is unfamiliar to you. 
+reading on service accounts in GCP if this is unfamiliar to you.
 
 Create the account with the necessary permissions:
 
@@ -80,7 +83,7 @@ $ gcloud iam service-accounts keys create ~/.gcp/account.json \
     --iam-account $SA_EMAIL
 ```
 
-Now in `./config/clouddriver-local.yml`, you'll find the following: 
+Now in `./config/clouddriver-local.yml`, you'll find the following:
 
 ```yaml
 dockerRegistry:
@@ -94,17 +97,12 @@ dockerRegistry:
         - # the names of your GCR images (<project>/<image>)
 ```
 
-In the above entry you need to update the `repositories` field to contain the 
+In the above entry you need to update the `repositories` field to contain the
 list of all images you want to index.
 
-### Anything else... except for ECR
+### Everything else
 
-> ECR doesn't support enough of the [v2 registry
-> api](https://docs.docker.com/registry/spec/api/) to be supportable by
-> Spinnaker.
-
-
-In `./config/clouddriver-local.yml`, you'll find the following: 
+In `./config/clouddriver-local.yml`, you'll find the following:
 
 ```yaml
 dockerRegistry:
@@ -125,12 +123,12 @@ mentioned above.
 
 ## Configuring Pipeline Storage
 
-Open `./config/spinnaker-local.yml`, where you'll find the below section which 
+Open `./config/spinnaker-local.yml`, where you'll find the below section which
 is mostly filled out:
 
 ```yaml
   front50:
-    host: spin-front50.spinnaker.svc.cluster.local
+    host: spin-front50.spinnaker
     port: 8080
     baseUrl: ${services.default.protocol}://${services.front50.host}:${services.front50.port}
 
@@ -150,11 +148,11 @@ is mostly filled out:
       enabled: false # Or me
 ```
 
-Add values for `front50.storage_bucket` 
-(a unique bucket name that will created by spinnaker if it doesn't exist)
+Add values for `front50.storage_bucket`
+(a dedicated bucket for Spinnaker that you've already created)
 and set `true` for either `front50.gcs.enabled` or `front50.s3.enabled`
 depending on which storage solution you want to use. If you
-are using GCS, you need a json account file at `~/.gcp/account.json`, and 
+are using GCS, you need a json account file at `~/.gcp/account.json`, and
 specify the project in `front50.gcs.project`.
 Otherwise, you need your AWS credentials to be located at `~/.aws/credentials`.
 
@@ -162,19 +160,22 @@ Otherwise, you need your AWS credentials to be located at `~/.aws/credentials`.
 
 ```
 $ bash scripts/startup-all.sh  # this takes a little while...
-$ bash scripts/connect.sh deck 9000 # leave this running, open a new terminal, and run
-$ bash scripts/connect.sh gate 8084 # leave this running too...
-``` 
+```
 
-Note, deck and gate may not be up immediately, wait until 
+Note that deck and gate may not be up immediately. Wait until the following shows that each container is ready before continuing.
 
 ```
 $ kubectl get pods --namespace=spinnaker
 ```
 
-shows that each container is ready before opening the connections above.
+Then initiate port forwarding to your local box. Leave each of the following running *in their own terminal window*.
 
-Now point your browser at [localhost:9000](http://localhost:9000), and you're all set!
+```
+$ bash scripts/connect.sh deck 9000 # leave this running, open a new terminal, and run the next line
+$ bash scripts/connect.sh gate 8084 # leave this running too...
+```
+
+Then point your browser at [localhost:9000](http://localhost:9000), and you're all set!
 
 ## What Just Happened?
 

@@ -151,7 +151,7 @@ EOF
 # Start script
 
 # Install node
-NODE_VERSION=4.4.1
+NODE_VERSION=7.0.0
 . /etc/profile.d/nvm.sh
 nvm install $NODE_VERSION
 nvm alias default $NODE_VERSION
@@ -160,7 +160,7 @@ nvm alias default $NODE_VERSION
 have_packer=$(which packer)
 if [[ ! $have_packer ]]; then
   echo "Installing packer"
-  url=https://releases.hashicorp.com/packer/0.8.6/packer_0.8.6_linux_amd64.zip
+  url=https://releases.hashicorp.com/packer/0.12.1/packer_0.12.1_linux_amd64.zip
   pushd $HOME
   if ! curl -s --location -O "$url"; then
      popd
@@ -188,8 +188,19 @@ if prompt_YN "Y" "Install (or update) Google Cloud Platform SDK?"; then
    # Note that this is in this script because the gcloud install method isn't
    # system-wide. The awscli is installed in the install_development.sh script.
    pushd $HOME
+   echo "*** REMOVING pre-installed gcloud..."
+   sudo apt-get remove google-cloud-sdk -y
    echo "*** BEGIN installing gcloud..."
    curl https://sdk.cloud.google.com | bash
+
+   if [[ -f $HOME/.bashrc ]]; then
+     echo "Re-sourcing .bashrc to pick up path changes"
+     source $HOME/.bashrc
+   fi
+
+   echo "Adding kubectl..."
+   gcloud components install kubectl -q || true
+
    if [[ ! -f $HOME/.config/gcloud/credentials ]]; then
       echo "Running gcloud authentication..."
       gcloud auth login
@@ -208,6 +219,18 @@ if ! aws --version >& /dev/null && prompt_YN "Y" "Install AWS Platform SDK?"; th
     sudo apt-get install -y awscli
 fi
 
+# Setup Azure SDK
+# If azure-cli isn't installed, give a second chance here for consistency
+if ! azure-cli --version >& /dev/null && prompt_YN "N" "Install Azure Platform SDK?"; then
+    # https://docs.microsoft.com/en-us/cli/azure/install-azure-cli#apt-get
+    echo "deb [arch=amd64] https://packages.microsoft.com/repos/azure-cli/ wheezy main" | \
+         sudo tee /etc/apt/sources.list.d/azure-cli.list
+    sudo apt-key adv --keyserver packages.microsoft.com --recv-keys 417A0893
+    sudo apt-get install apt-transport-https
+    sudo apt-get update
+    sudo apt-get install -y azure-cli
+    az login
+fi
 
 # Setup source code
 if [[ "$CONFIRMED_GITHUB_REPOSITORY_OWNER" != "none" ]]; then
@@ -227,9 +250,30 @@ if [[ "$CONFIRMED_GITHUB_REPOSITORY_OWNER" != "none" ]]; then
       --github_user $CONFIRMED_GITHUB_REPOSITORY_OWNER
 fi
 
+# Prepare spinnaker-local.yml
+if [[ ! -f $HOME/.spinnaker/spinnaker-local.yml ]]; then
+    # This has a side effect in which it will produce a spinnaker-local if
+    # it did not already exist. Since there is no "bogus" microservice, this
+    # will not actually do anything other than produce the spinnaker-local.
+    # The default spinnaker-local will be configured for this machine as
+    # a better starting point than otherwise.
+    ./spinnaker/dev/stop_dev.sh bogus >& /dev/null || true
+fi
+
 # Some dependencies of Deck rely on Bower to manage their dependencies. Bower
 # annoyingly prompts the user to collect some stats, so this disables that.
 echo "{\"interactive\":false}" > ~/.bowerrc
+
+
+if [[ -f $HOME/.spinnaker/spinnaker-local.yml ]]; then
+  echo "Forcing cassandra off."
+  ./spinnaker/install/change_cassandra.sh --echo=inMemory --front50=gcs --change_defaults=false --change_local=true
+  chmod 600 $HOME/.spinnaker/spinnaker-local.yml
+
+  # Note that dev_runner will create a default spinnaker-local and disable cassandra
+  # when first run from source if there is no spinnaker-local.
+  # It does more initialization so we'll defer to that rather than doing it here.
+fi
 
 
 # If this script was run in a different shell then we

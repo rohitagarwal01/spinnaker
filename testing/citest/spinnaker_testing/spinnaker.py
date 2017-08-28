@@ -256,7 +256,10 @@ class SpinnakerAgent(service_testing.HttpAgent):
       elif bindings['NATIVE_HOSTNAME']:
         host_platform = 'native'
       else:
-        raise ValueError('No --native_hostname nor --gce_project')
+        bindings['NATIVE_HOSTNAME'] = 'localhost'
+        logging.getLogger(__name__).info('Assuming --native_hostname=localhost')
+        host_platform = 'native'
+
     return host_platform
 
   @classmethod
@@ -332,13 +335,14 @@ class SpinnakerAgent(service_testing.HttpAgent):
         context_relation = 'INVALID'
         raise RuntimeError(error)
 
-      approx_config = cls.__get_deployed_local_yaml_bindings(gcloud,
-                                                             instance)
-      protocol = approx_config.get('services.default.protocol', 'http')
+      protocol = bindings['NETWORK_PROTOCOL']
       base_url = '{protocol}://{netloc}'.format(protocol=protocol,
                                                 netloc=netloc)
-      logger.info('%s is available at %s', name, base_url)
-      deployed_config = scrape_spring_config(os.path.join(base_url, 'env'))
+      logger.info('%s is available at %s. Using %s', name, netloc, base_url)
+      deployed_config = scrape_spring_config(
+          os.path.join(base_url, 'resolvedEnv'))
+      JournalLogger.journal_or_log_detail(
+          '{0} configuration'.format(name), deployed_config)
       spinnaker_agent = cls(base_url, status_factory)
       spinnaker_agent.__deployed_config = deployed_config
       context_relation = 'VALID'
@@ -370,8 +374,11 @@ class SpinnakerAgent(service_testing.HttpAgent):
       return None
 
     logger.info('%s is available at %s', name, base_url)
-    env_url = os.path.join(base_url, 'env')
+    env_url = os.path.join(base_url, 'resolvedEnv')
     deployed_config = scrape_spring_config(env_url)
+    JournalLogger.journal_or_log_detail(
+        '{0} configuration'.format(name), deployed_config)
+
     spinnaker_agent = cls(base_url, status_factory)
     spinnaker_agent.__deployed_config = deployed_config
 
@@ -485,7 +492,7 @@ class SpinnakerAgent(service_testing.HttpAgent):
       return None
 
     # gcloud prints an info message about upgrades to the output stream.
-    # There seems to be no way to supress this!
+    # There seems to be no way to suppress this!
     # Look for it and truncate the stream there if we see it.
     got = response.output
     update_msg_offset = got.find('Updates are available')

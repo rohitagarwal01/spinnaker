@@ -8,6 +8,18 @@ redis:
 aws:
   enabled: ${providers.aws.enabled:false}
 
+azure:
+  enabled: ${providers.azure.enabled:false}
+  accounts:
+    - name: ${providers.azure.primaryCredentials.name}
+      clientId: ${providers.azure.primaryCredentials.clientId}
+      appKey: ${providers.azure.primaryCredentials.appKey}
+      tenantId: ${providers.azure.primaryCredentials.tenantId}
+      subscriptionId: ${providers.azure.primaryCredentials.subscriptionId}
+      objectId: ${providers.azure.primaryCredentials.objectId}
+      packerResourceGroup: ${providers.azure.primaryCredentials.packerResourceGroup}
+      packerStorageAccount: ${providers.azure.primaryCredentials.packerStorageAccount}
+
 docker:
   enabled: ${services.docker.enabled:false}
   bakeryDefaults:
@@ -37,9 +49,3 @@ spectator:
     enabled: ${services.stackdriver.enabled}
     projectName: ${services.stackdriver.projectName}
     credentialsPath: ${services.stackdriver.credentialsPath}
-
-stackdriver:
-  hints:
-    - name: bakes
-      labels:
-      - success

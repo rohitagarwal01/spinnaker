@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+import sys
 import tempfile
 import unittest
 
@@ -221,6 +222,18 @@ e:
     with self.assertRaises(ValueError):
       bindings.get('field')
 
+  def test_load_None_strings(self):
+    bindings = YamlBindings()
+    bindings.import_dict({'a': None, 'b': 'B'})
+    bindings.import_dict({'a': 'A', 'b': None})
+    self.assertEqual({'a': 'A', 'b': None}, bindings.map)
+
+  def test_load_None_dict(self):
+    bindings = YamlBindings()
+    bindings.import_dict({'a': None, 'b': {'y': 'Y'}})
+    bindings.import_dict({'a': {'x': 'X'}, 'b': None})
+    self.assertEqual({'a': {'x': 'X'}, 'b': {'y': 'Y'}}, bindings.map)
+
   def test_replace(self):
     bindings = YamlBindings()
     bindings.import_dict({'a': 'A', 'container': {'b': 'B'}})
@@ -257,30 +270,37 @@ e:
      self.assertEqual(234, bindings.get('def'))
      self.assertEqual(123, bindings.get('indirect'))
 
+  def test_concat(self):
+     bindings = YamlBindings()
+     bindings.import_string(
+        "s: 'TEST'\nmix: a.${s}")
+     self.assertEqual('a.TEST', bindings.get('mix'))
+
+  def test_concat_default(self):
+     bindings = YamlBindings()
+     bindings.import_string(
+        "mix: a.${s:TEST}")
+     self.assertEqual('a.TEST', bindings.get('mix'))
+
   def test_transform_ok(self):
      bindings = YamlBindings()
      bindings.import_dict({'a': {'b': { 'space': 'WithSpace',
-                                        'nospace': 'WithoutSpace',
                                         'empty': 'Empty'}},
                            'x' : {'unique': True}})
      template = """
 a:
   b:
     space: {space}
-    nospace:{nospace}
     empty:{empty}
 unique:
   b:
      space: A
-     nospace:B
      empty:
 """
-     source = template.format(space='SPACE', nospace='NOSPACE', empty='')
-     expect = template.format(space='WithSpace',
-                              nospace=' WithoutSpace',
-                              empty=' Empty')
+     source = template.format(space='SPACE', empty='')
+     expect = template.format(space='WithSpace', empty=' Empty')
      got = source
-     for key in [ 'a.b.space', 'a.b.nospace', 'a.b.empty' ]:
+     for key in [ 'a.b.space', 'a.b.empty' ]:
        got = bindings.transform_yaml_source(got, key)
 
      self.assertEqual(expect, bindings.transform_yaml_source(expect, 'bogus'))
@@ -296,8 +316,8 @@ a:
   b:
      child: Hello
 """
-     with self.assertRaises(ValueError):
-       bindings.transform_yaml_source(yaml, 'x.unique')
+     with self.assertRaises(KeyError):
+       bindings.transform_yaml_source(yaml, 'x.unique', add_new_nodes=False)
 
   def test_list(self):
      bindings = YamlBindings()
@@ -333,6 +353,21 @@ a:
 
     os.remove(temp_path)
 
+  def test_create_yml_source(self):
+    expect = {
+      'first': { 'child': 'FirstValue' },
+      'second': { 'child': True }
+    }
+    fd, temp_path = tempfile.mkstemp()
+    os.write(fd, "")
+    os.close(fd)
+    YamlBindings.update_yml_source(temp_path, expect)
+
+    comparison_bindings = YamlBindings()
+    comparison_bindings.import_path(temp_path)
+    self.assertEqual(expect, comparison_bindings.map)
+    os.remove(temp_path)
+
   def test_update_yml_source(self):
     yaml = """
 a: A
@@ -353,7 +388,10 @@ e:
       'b': 'Z',
       'd': {
         'child': {
-          'grandchild': 'xy'
+          'grandchild': 'xy',
+          'new_grandchild': {
+             'new_node': 'inserted'
+          }
         }
       },
       'e': 'AA'
@@ -364,10 +402,21 @@ e:
               'c': ['A','B'],
               'd': {
                 'child': {
-                  'grandchild': 'xy'
+                  'grandchild': 'xy',
+                  'new_grandchild': {
+                    'new_node': 'inserted'
+                  }
                 }
               },
               'e': 'AA'}
+
+    with self.assertRaises(KeyError):
+      YamlBindings.update_yml_source(
+          temp_path, update_dict, add_new_nodes=False)
+
+    # Reset the file
+    with open(temp_path, 'w') as fd:
+      fd.write(yaml)
 
     YamlBindings.update_yml_source(temp_path, update_dict)
 
@@ -379,4 +428,5 @@ e:
 if __name__ == '__main__':
   loader = unittest.TestLoader()
   suite = loader.loadTestsFromTestCase(YamlUtilTest)
-  unittest.TextTestRunner(verbosity=2).run(suite)
+  got = unittest.TextTestRunner(verbosity=2).run(suite)
+  sys.exit(len(got.errors) + len(got.failures))

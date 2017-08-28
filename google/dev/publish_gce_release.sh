@@ -29,6 +29,8 @@
 
 set -e
 set -u
+set -o pipefail
+set -x
 
 SERVICE_ACCOUNT=${SERVICE_ACCOUNT:-""}
 ORIGINAL_ARTIFACT_REPO_PATH=${ORIGINAL_ARTIFACT_REPO_PATH:-""}
@@ -40,6 +42,7 @@ ORIGINAL_PROJECT_ID=${ORIGINAL_PROJECT_ID:-$(gcloud config list  \
 PUBLISH_ARTIFACT_REPO_PATH=${PUBLISH_ARTIFACT_REPO_PATH:-""}
 PUBLISH_IMAGE=${PUBLISH_PROJECT_ID:-""}
 PUBLISH_PROJECT_ID=${PUBLISH_PROJECT_ID:-""}
+PUBLISH_FAMILY=${PUBLISH_FAMILY:-""}
 ZONE=${ZONE:-"us-central1-c"}
 
 
@@ -57,7 +60,7 @@ function validate_args() {
   die_if_empty "$ORIGINAL_PROJECT_ID" "--original_project_id"
   die_if_empty "$ZONE" "--zone"
 
-  
+
   if [[ "$PUBLISH_ARTIFACT_REPO_PATH" && ! "$ORIGINAL_ARTIFACT_REPO_PATH" ]] \
       || [[ ! "$PUBLISH_ARTIFACT_REPO_PATH" \
            && "$ORIGINAL_ARTIFACT_REPO_PATH" ]]; then
@@ -93,6 +96,10 @@ function process_args() {
            ;;
          --publish_project)
            PUBLISH_PROJECT_ID="$1"
+           shift
+           ;;
+         --publish_family)
+           PUBLISH_FAMILY="$1"
            shift
            ;;
          --original_repo)
@@ -164,10 +171,16 @@ gcloud compute disks create "$PUBLISH_IMAGE" $GCLOUD_ACCOUNT_ARG\
     --image "$ORIGINAL_IMAGE"
 
 echo "Publishing image"
+CREATE_IMAGE_ARGS=""
+if [ -n "$PUBLISH_FAMILY" ]; then
+  CREATE_IMAGE_ARGS="--family $PUBLISH_FAMILY"
+fi
+
 gcloud compute images create "$PUBLISH_IMAGE" $GCLOUD_ACCOUNT_ARG\
     --project "$PUBLISH_PROJECT_ID" \
     --source-disk-zone "$ZONE" \
-    --source-disk "$PUBLISH_IMAGE"
+    --source-disk "$PUBLISH_IMAGE" \
+    $CREATE_IMAGE_ARGS
 
 echo "Deleting disk"
 gcloud compute disks delete "$PUBLISH_IMAGE" $GCLOUD_ACCOUNT_ARG\
@@ -178,7 +191,7 @@ gcloud compute disks delete "$PUBLISH_IMAGE" $GCLOUD_ACCOUNT_ARG\
 if [[ "$PUBLISH_ARTIFACT_REPO_PATH" ]]; then
   echo "Copying artifact repository"
   copy_artifact_repository \
-      "$ORIGINAL_ARTIFACT_REPO_PATH" "$PUBLISH_ARTIFACT_REPO_PATH" 
+      "$ORIGINAL_ARTIFACT_REPO_PATH" "$PUBLISH_ARTIFACT_REPO_PATH"
 fi
 
 echo "Published $PUBLISH_IMAGE to $PUBLISH_PROJECT_ID."

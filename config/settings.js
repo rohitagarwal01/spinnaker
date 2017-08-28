@@ -32,7 +32,12 @@
 // var smsEnabled = ${services.echo.notifications.sms.enabled};
 // var slackEnabled = ${services.echo.notifications.slack.enabled};
 // var slackBotName = ${services.echo.notifications.slack.botName};
-// var fiatEnabled = ${services.fiat.enabled}
+// var fiatEnabled = ${services.fiat.enabled};
+// var chaosEnabled = ${services.chaos.enabled};
+// var openstackPrimaryAccount = ${providers.openstack.primaryCredentials.name};
+// var openstackDefaultRegion = ${providers.openstack.defaultRegion};
+// var appenginePrimaryAccount = ${providers.appengine.primaryCredentials.name};
+// var dcosPrimaryAccount = ${providers.docs.primaryCredentials.name};
 
 // END reconfigure_spinnaker
 /**
@@ -58,7 +63,8 @@ window.spinnakerSettings = {
         account: googlePrimaryAccount,
         region: googleDefaultRegion,
         zone: googleDefaultZone,
-      }
+      },
+      associatePublicIpAddress: true,
     },
     aws: {
       defaults: {
@@ -82,9 +88,27 @@ window.spinnakerSettings = {
     kubernetes: {
       defaults: {
         account: kubernetesPrimaryAccount,
-        namespace: kubernetesDefaultNamespace
+        namespace: kubernetesDefaultNamespace,
+        proxy: 'localhost:8001'
       },
-    }
+    },
+    openstack: {
+      defaults: {
+        account: openstackPrimaryAccount,
+        region: openstackDefaultRegion
+      }
+    },
+    appengine: {
+      defaults: {
+        account: appenginePrimaryAccount,
+        editLoadBalancerStageEnabled: false,
+      }
+    },
+    dcos: {
+      defaults: {
+        account: dcosPrimaryAccount
+      }
+    },
   },
   notifications: {
     email: {
@@ -112,5 +136,6 @@ window.spinnakerSettings = {
     roscoMode: true,
     netflixMode: false,
     fiatEnabled: fiatEnabled,
+    chaosMonkey: chaosEnabled,
   },
 };

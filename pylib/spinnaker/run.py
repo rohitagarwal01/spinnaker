@@ -32,7 +32,7 @@ class RunResult(collections.namedtuple('RunResult',
   pass
 
 
-def __collect_from_stream(stream, buffer, echo_stream):
+def __collect_from_stream(stream, buffer, echo_stream, observe_data):
   """Read all the input from a stream.
 
   Args:
@@ -61,10 +61,13 @@ def __collect_from_stream(stream, buffer, echo_stream):
   # Chunk together all the data we just received.
   if collected:
       buffer.append(''.join(collected))
+  if observe_data:
+    observe_data(collected)
   return len(collected)
 
 
-def run_and_monitor(command, echo=True, input=None):
+def run_and_monitor(command, echo=True, input=None,
+                    observe_stdout=None, observe_stderr=None):
   """Run the provided command in a subprocess shell.
 
   Args:
@@ -99,19 +102,19 @@ def run_and_monitor(command, echo=True, input=None):
   err = []
   echo_out = sys.stdout if echo else None
   echo_err = sys.stderr if echo else None
-  while (__collect_from_stream(process.stdout, out, echo_out)
-         or  __collect_from_stream(process.stderr, err, echo_err)
+  while (__collect_from_stream(process.stdout, out, echo_out, observe_stdout)
+         or  __collect_from_stream(process.stderr, err, echo_err, observe_stderr)
          or process.poll() is None):
       pass
 
   # Get any trailing data from termination race condition
-  __collect_from_stream(process.stdout, out, echo_out)
-  __collect_from_stream(process.stderr, err, echo_err)
+  __collect_from_stream(process.stdout, out, echo_out, observe_stdout)
+  __collect_from_stream(process.stderr, err, echo_err, observe_stderr)
 
   return RunResult(process.returncode, ''.join(out), ''.join(err))
 
 
-def run_quick(command, echo=True):
+def run_quick(command, echo=True, dup_stderr_to_stdout=True):
   """A more efficient form of run_and_monitor that doesnt monitor output.
 
   Args:
@@ -123,14 +126,17 @@ def run_quick(command, echo=True):
        The content of stderr will be joined into stdout.
        stderr itself will be None.
   """
+  stderr_target = subprocess.STDOUT if dup_stderr_to_stdout else subprocess.PIPE
   p = subprocess.Popen(command, shell=True, close_fds=True,
-                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                       stdout=subprocess.PIPE, stderr=stderr_target)
   stdout, stderr = p.communicate()
   if echo:
     print command
     print stdout
+    if not dup_stderr_to_stdout:
+      print stderr
 
-  return RunResult(p.returncode, stdout, None)
+  return RunResult(p.returncode, stdout, stderr)
 
 
 def check_run_and_monitor(command, echo=True, input=None):
@@ -150,19 +156,24 @@ def check_run_and_monitor(command, echo=True, input=None):
   result = run_and_monitor(command, echo=echo, input=input)
   if result.returncode != 0:
     error = 'FAILED {command} with exit code {code}\n{err}'.format(
-        command=command, code=result.returncode, err=result.stderr.strip())
+        command=command, code=result.returncode,
+        err=result.stderr.strip() if not echo else '')
     sys.stderr.write(error + '\n')
     raise RuntimeError(error)
 
   return result
 
 
-def check_run_quick(command, echo=True):
+def check_run_quick(command, echo=True, dup_stderr_to_stdout=True):
   """A more efficient form of check_run_and_monitor that doesnt monitor output.
 
   Args:
     command [string]: The shell command to run.
     echo [bool]: If True then echo the command and output to stdout.
+    dup_stderr_to_stdout [bool]: If True then also write stderr to stdout,
+       otherwise keep the streams separate. Duping them interleaves the sequence
+       into a single stream which is more human readable but might not be machine
+       readable if expecting a response and a warning is emitted.
 
   Returns:
     RunResult with result code and output from running the command.
@@ -172,14 +183,14 @@ def check_run_quick(command, echo=True):
   Raises:
     RuntimeError if command failed.
   """
-  result = run_quick(command, echo)
+  result = run_quick(command, echo=echo, dup_stderr_to_stdout=dup_stderr_to_stdout)
   if result.returncode:
+     msg = result.stdout if dup_stderr_to_stdout else result.stderr
      error = ('FAILED with exit code {code}'
               '\n\nCommand was {command}'
-              '\n\nError was {stdout}'.format(
+              '\n\nError was {msg}'.format(
                  code=result.returncode,
                 command=command,
-                stdout=result.stdout))
+                msg=msg))
      raise RuntimeError(error)
   return result
-

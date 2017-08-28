@@ -60,14 +60,18 @@ Sample Usage:
 import sys
 
 # citest modules.
+import citest.base
 import citest.aws_testing as aws
 import citest.json_predicate as jp
 import citest.service_testing as st
+from citest.json_contract import ObservationPredicateFactory
+ov_factory = ObservationPredicateFactory()
 
 # Spinnaker modules.
 import spinnaker_testing as sk
 import spinnaker_testing.kato as kato
-import citest.base
+
+from botocore.exceptions import (BotoCoreError, ClientError)
 
 
 class AwsKatoTestScenario(sk.SpinnakerTestScenario):
@@ -97,6 +101,12 @@ class AwsKatoTestScenario(sk.SpinnakerTestScenario):
       This is the agent that test operations will be posted to.
     """
     return kato.new_agent(bindings)
+
+  def __init__(self, bindings):
+    """Initialize scenario."""
+    super(AwsKatoTestScenario, self).__init__(bindings)
+    self.elb_client = self.aws_observer.make_boto_client('elb')
+
 
   def upsert_load_balancer(self):
     """Creates OperationContract for upsertLoadBalancer.
@@ -146,24 +156,24 @@ class AwsKatoTestScenario(sk.SpinnakerTestScenario):
             'unhealthyThreshold': health_check['UnhealthyThreshold']
         })
 
-    builder = aws.AwsContractBuilder(self.aws_observer)
+    builder = aws.AwsPythonContractBuilder(self.aws_observer)
     (builder.new_clause_builder('Load Balancer Added', retryable_for_secs=30)
-     .collect_resources(
-         aws_module='elb',
-         command='describe-load-balancers',
-         args=['--load-balancer-names', self.__use_lb_name])
-     .contains_path_match(
-        'LoadBalancerDescriptions', {
-            'HealthCheck': jp.DICT_MATCHES({key: jp.EQUIVALENT(value)
-                            for key, value in health_check.items()}),
-            'AvailabilityZones':
-                jp.LIST_MATCHES([jp.STR_SUBSTR(zone) for zone in avail_zones]),
-            'ListenerDescriptions/Listener': jp.DICT_MATCHES({
-                key: jp.EQUIVALENT(value)
-                     for key,value in listener['Listener'].items()})
-            })
-    )
-
+     .call_method(
+         self.elb_client.describe_load_balancers,
+         LoadBalancerNames=[self.__use_lb_name])
+     .EXPECT(ov_factory.value_list_path_contains(
+         'LoadBalancerDescriptions',
+          jp.LIST_MATCHES([jp.DICT_MATCHES({
+               'HealthCheck': jp.DICT_MATCHES(
+                   {key: jp.EQUIVALENT(value)
+                    for key, value in health_check.items()}),
+               'AvailabilityZones':
+                   jp.LIST_MATCHES([jp.STR_SUBSTR(zone) for zone in avail_zones]),
+               'ListenerDescriptions/Listener': jp.DICT_MATCHES(
+                   {key: jp.EQUIVALENT(value)
+                    for key, value in listener['Listener'].items()})
+          })]))
+      ))
 
     return st.OperationContract(
         self.new_post_operation(
@@ -185,14 +195,14 @@ class AwsKatoTestScenario(sk.SpinnakerTestScenario):
             'loadBalancerName': self.__use_lb_name
         })
 
-    builder = aws.AwsContractBuilder(self.aws_observer)
+    builder = aws.AwsPythonContractBuilder(self.aws_observer)
     (builder.new_clause_builder('Load Balancer Removed')
-     .collect_resources(
-         aws_module='elb',
-         command='describe-load-balancers',
-         args=['--load-balancer-names', self.__use_lb_name],
-         no_resources_ok=True)
-     .excludes_path_value('LoadBalancerName', self.__use_lb_name))
+     .call_method(
+         self.elb_client.describe_load_balancers,
+         LoadBalancerNames=[self.__use_lb_name])
+     .EXPECT(ov_factory.error_list_contains(
+         jp.ExceptionMatchesPredicate(
+               (BotoCoreError, ClientError), 'LoadBalancerNotFound'))))
 
     return st.OperationContract(
         self.new_post_operation(
@@ -215,7 +225,6 @@ class AwsKatoIntegrationTest(st.AgentTestCase):
 
   @property
   def testing_agent(self):
-    scenario = self.scenario
     return self.scenario.agent
 
   def test_a_upsert_load_balancer(self):
